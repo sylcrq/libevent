@@ -1,20 +1,29 @@
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
+#include <unistd.h>
 
 #include "event.h"
 
-void read_callback()
+void read_callback(int fd, int type)
 {
-    printf("read\n");
+    char buffer[1024] = {0};
+
+    if(read(fd, buffer, 1024) < 0)
+    {
+        fprintf(stderr, "read error\n");
+        return;
+    }
+
+    printf("read: %s\n", buffer);
 }
 
-void write_callback()
-{
-    printf("write\n");
-}
+//void write_callback()
+//{
+//    printf("write\n");
+//}
 
 int main()
 {

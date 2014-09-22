@@ -21,9 +21,9 @@ fd_set g_write_fds;
 
 int event_init(void)
 {
-    g_max_fds = 0;
-    FD_ZERO(&g_read_fds);
-    FD_ZERO(&g_write_fds);
+    //g_max_fds = 0;
+    //FD_ZERO(&g_read_fds);
+    //FD_ZERO(&g_write_fds);
 
     TAILQ_INIT(&read_queue);
     TAILQ_INIT(&write_queue);
@@ -31,7 +31,7 @@ int event_init(void)
     return 0;
 }
 
-int event_set(struct event* evp, int fd, int type, void (*callback)(void))
+int event_set(struct event* evp, int fd, int type, void (*callback)(int, int))
 {
     if(evp != NULL)
     {
@@ -51,16 +51,16 @@ int event_add(struct event* evp)
         {
             TAILQ_INSERT_TAIL(&read_queue, evp, ev_read_next);
 
-            FD_SET(evp->ev_fd, &g_read_fds);
-            g_max_fds = MAX(g_max_fds, evp->ev_fd);
+            //FD_SET(evp->ev_fd, &g_read_fds);
+            //g_max_fds = MAX(g_max_fds, evp->ev_fd);
         }
 
         if(evp->ev_type & EVENT_WRITE)
         {
             TAILQ_INSERT_TAIL(&write_queue, evp, ev_write_next);
 
-            FD_SET(evp->ev_fd, &g_write_fds);
-            g_max_fds = MAX(g_max_fds, evp->ev_fd);
+            //FD_SET(evp->ev_fd, &g_write_fds);
+            //g_max_fds = MAX(g_max_fds, evp->ev_fd);
         }
     }
 
@@ -75,7 +75,7 @@ int event_delete(struct event* evp)
         {
             TAILQ_REMOVE(&read_queue, evp, ev_read_next);
             
-            FD_CLR(evp->ev_fd, &g_read_fds);
+            //FD_CLR(evp->ev_fd, &g_read_fds);
             //TODO: Update g_max_fds
         }
 
@@ -83,7 +83,7 @@ int event_delete(struct event* evp)
         {
             TAILQ_REMOVE(&write_queue, evp, ev_write_next);
 
-            FD_CLR(evp->ev_fd, &g_write_fds);
+            //FD_CLR(evp->ev_fd, &g_write_fds);
             //TODO: Update g_max_fds
         }
     }
@@ -105,6 +105,23 @@ int event_delete(struct event* evp)
 
 int event_dispatch(void)
 {
+    g_max_fds = 0;
+    FD_ZERO(&g_read_fds);
+    FD_ZERO(&g_write_fds);
+
+    struct event* evp;
+    TAILQ_FOREACH(evp, &read_queue, ev_read_next)
+    {
+        FD_SET(evp->ev_fd, &g_read_fds);
+        g_max_fds = MAX(g_max_fds, evp->ev_fd);
+    }
+
+    TAILQ_FOREACH(evp, &write_queue, ev_write_next)
+    {
+        FD_SET(evp->ev_fd, &g_write_fds);
+        g_max_fds = MAX(g_max_fds, evp->ev_fd);
+    }
+
     while(1)
     {
         int ret = select(g_max_fds + 1, &g_read_fds, &g_write_fds, NULL, NULL);
@@ -112,6 +129,7 @@ int event_dispatch(void)
         if(ret < 0)
         {
             fprintf(stderr, "select error\n");
+            return -1;
         }
         else if(ret == 0)
         {
@@ -119,12 +137,12 @@ int event_dispatch(void)
         }
         else
         {
-            struct event* evp;
+            //struct event* evp;
             TAILQ_FOREACH(evp, &read_queue, ev_read_next)
             {
                 if(FD_ISSET(evp->ev_fd, &g_read_fds))
                 {
-                    evp->ev_callback();
+                    evp->ev_callback(evp->ev_fd, EVENT_READ);
                 }
             }
 
@@ -132,7 +150,7 @@ int event_dispatch(void)
             {
                 if(FD_ISSET(evp->ev_fd, &g_write_fds))
                 {
-                    evp->ev_callback();
+                    evp->ev_callback(evp->ev_fd, EVENT_WRITE);
                 }
             }
         }

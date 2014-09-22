@@ -11,7 +11,7 @@ struct event
     int ev_fd;
     int ev_type;
 
-    void (*ev_callback)(void);
+    void (*ev_callback)(int, int);
 
     //struct timeval ev_timeout;
 
@@ -21,7 +21,7 @@ struct event
 
 int event_init(void);
 
-int event_set(struct event* evp, int fd, int type, void (*callback)(void));
+int event_set(struct event* evp, int fd, int type, void (*callback)(int, int));
 int event_add(struct event* evp);
 int event_delete(struct event* evp);
 
