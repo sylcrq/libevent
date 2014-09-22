@@ -137,21 +137,32 @@ int event_dispatch(void)
         }
         else
         {
-            //struct event* evp;
-            TAILQ_FOREACH(evp, &read_queue, ev_read_next)
+            struct event* next;
+
+            for(evp=TAILQ_FIRST(&read_queue); evp != NULL; )
             {
+                next = TAILQ_NEXT(evp, ev_read_next);
+
                 if(FD_ISSET(evp->ev_fd, &g_read_fds))
                 {
+                    event_delete(evp);
                     evp->ev_callback(evp->ev_fd, EVENT_READ);
                 }
+
+                evp = next;
             }
 
-            TAILQ_FOREACH(evp, &write_queue, ev_write_next)
+            for(evp=TAILQ_FIRST(&write_queue); evp != NULL; )
             {
+                next = TAILQ_NEXT(evp, ev_write_next);
+
                 if(FD_ISSET(evp->ev_fd, &g_write_fds))
                 {
+                    event_delete(evp);
                     evp->ev_callback(evp->ev_fd, EVENT_WRITE);
                 }
+
+                evp = next;
             }
         }
     }
