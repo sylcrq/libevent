@@ -7,7 +7,7 @@
 
 #include "event.h"
 
-void read_callback(int fd, int type)
+void read_callback(int fd, int type, void* arg)
 {
     char buffer[1024] = {0};
 
@@ -18,6 +18,8 @@ void read_callback(int fd, int type)
     }
 
     printf("read: %s\n", buffer);
+
+    event_add(arg);
 }
 
 //void write_callback()
@@ -47,7 +49,7 @@ int main()
     memset(&fifo_event, 0, sizeof(struct event));
     //event_add(fd, 0, read_callback);
     //event_add(fd, 1, write_callback);
-    event_set(&fifo_event, fd, EVENT_READ, read_callback);
+    event_set(&fifo_event, fd, EVENT_READ, &fifo_event, read_callback);
 
     event_add(&fifo_event);
 #if 0
