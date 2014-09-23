@@ -6,6 +6,11 @@
 #define EVENT_READ  0x1
 #define EVENT_WRITE 0x2
 
+#define EVLIST_READ     EVENT_READ
+#define EVLIST_WRITE    EVENT_WRITE
+#define EVLIST_INIT     0x4
+#define EVLIST_ADD      0x8
+
 struct event
 {
     int ev_fd;
@@ -14,6 +19,7 @@ struct event
 
     void (*ev_callback)(int, int, void*);
 
+    int ev_flag;
     //struct timeval ev_timeout;
 
     TAILQ_ENTRY(event) ev_read_next;

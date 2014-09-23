@@ -43,6 +43,7 @@ int event_set(struct event* evp, int fd, int type, void* arg, void (*callback)(i
     evp->ev_type = type;
     evp->ev_arg = arg;
     evp->ev_callback = callback;
+    evp->ev_flag = EVLIST_INIT;
 
     return 0;
 }
@@ -56,14 +57,16 @@ int event_add_post(struct event* evp)
 
     fprintf(stdout, "event_add_post: %p[%d, %d]\n", evp, evp->ev_fd, evp->ev_type);
 
-    if(evp->ev_type & EVENT_READ)
+    if( (evp->ev_type & EVENT_READ) && !(evp->ev_flag & EVLIST_READ) )
     {
         TAILQ_INSERT_TAIL(&read_queue, evp, ev_read_next);
+        evp->ev_flag |= EVLIST_READ;
     }
 
-    if(evp->ev_type & EVENT_WRITE)
+    if( (evp->ev_type & EVENT_WRITE) && !(evp->ev_flag & EVLIST_WRITE) )
     {
         TAILQ_INSERT_TAIL(&write_queue, evp, ev_write_next);
+        evp->ev_flag |= EVLIST_WRITE;
     }
 
     return 0;
@@ -80,7 +83,11 @@ int event_add(struct event* evp)
 
     if(g_event_loop)
     {
+        if(evp->ev_flag & EVLIST_ADD)
+            return 0;
+
         TAILQ_INSERT_TAIL(&add_queue, evp, ev_add_next);
+        evp->ev_flag |= EVLIST_ADD;
     }
     else
     {
@@ -99,14 +106,22 @@ int event_delete(struct event* evp)
 
     fprintf(stdout, "event_delete: %p[%d, %d]\n", evp, evp->ev_fd, evp->ev_type);
 
-    if(evp->ev_type & EVENT_READ)
+    if(evp->ev_flag & EVLIST_ADD)
     {
-        TAILQ_REMOVE(&read_queue, evp, ev_read_next);
+        TAILQ_REMOVE(&add_queue, evp, ev_add_next);
+        evp->ev_flag &= ~EVLIST_ADD;
     }
 
-    if(evp->ev_type & EVENT_WRITE)
+    if(evp->ev_flag & EVLIST_READ)
+    {
+        TAILQ_REMOVE(&read_queue, evp, ev_read_next);
+        evp->ev_flag &= ~EVLIST_READ;
+    }
+
+    if(evp->ev_flag & EVLIST_WRITE)
     {
         TAILQ_REMOVE(&write_queue, evp, ev_write_next);
+        evp->ev_flag &= ~EVLIST_WRITE;
     }
 
     return 0;
@@ -196,6 +211,8 @@ int event_dispatch(void)
                 next = TAILQ_NEXT(evp, ev_add_next);
 
                 TAILQ_REMOVE(&add_queue, evp, ev_add_next);
+                evp->ev_flag &= ~EVLIST_ADD;
+
                 event_add_post(evp);
 
                 evp = next;
