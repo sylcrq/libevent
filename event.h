@@ -18,6 +18,7 @@ struct event
 
     TAILQ_ENTRY(event) ev_read_next;
     TAILQ_ENTRY(event) ev_write_next;
+    TAILQ_ENTRY(event) ev_add_next;
 };
 
 int event_init(void);
