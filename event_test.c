@@ -11,15 +11,24 @@ void read_callback(int fd, int type, void* arg)
 {
     char buffer[1024] = {0};
 
-    if(read(fd, buffer, 1024) < 0)
+    if(type == EVENT_READ)
     {
-        fprintf(stderr, "read error\n");
-        return;
+        if(read(fd, buffer, 1024) < 0)
+        {
+            fprintf(stderr, "read error\n");
+            return;
+        }
+
+        printf("read: %s\n", buffer);
     }
-
-    printf("read: %s\n", buffer);
-
-    event_add(arg);
+    else if(type == EVENT_WRITE)
+    {
+    }
+    else if(type == EVENT_TIMEOUT)
+    {
+        printf("timeout\n");
+    }
+    //event_add(arg);
 }
 
 //void write_callback()
@@ -51,7 +60,11 @@ int main()
     //event_add(fd, 1, write_callback);
     event_set(&fifo_event, fd, EVENT_READ, &fifo_event, read_callback);
 
-    event_add(&fifo_event);
+    struct timeval tv;
+    tv.tv_sec = 10;
+    tv.tv_usec = 0;
+
+    event_add(&fifo_event, &tv);
 #if 0
     event_add(3);
     event_add(5);

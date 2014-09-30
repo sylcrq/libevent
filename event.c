@@ -12,6 +12,7 @@
 
 TAILQ_HEAD(event_rlist, event) read_queue;
 TAILQ_HEAD(event_wlist, event) write_queue;
+TAILQ_HEAD(event_tlist, event) timeout_queue;
 TAILQ_HEAD(event_alist, event) add_queue;
 
 // Global Variable
@@ -27,6 +28,7 @@ int event_init(void)
 
     TAILQ_INIT(&read_queue);
     TAILQ_INIT(&write_queue);
+    TAILQ_INIT(&timeout_queue);
     TAILQ_INIT(&add_queue);
 
     return 0;
@@ -72,7 +74,7 @@ int event_add_post(struct event* evp)
     return 0;
 }
 
-int event_add(struct event* evp)
+int event_add(struct event* evp, struct timeval* timeout)
 {
     if(!evp)
     {
@@ -80,6 +82,35 @@ int event_add(struct event* evp)
     }
 
     fprintf(stdout, "event_add: %p[%d, %d]\n", evp, evp->ev_fd, evp->ev_type);
+
+    if(timeout != NULL)
+    {
+        struct timeval now;
+        timerclear(&now);
+
+        gettimeofday(&now, NULL);
+
+        timeradd(&now, timeout, &(evp->ev_timeout));
+
+        fprintf(stdout, "event_add: timeout=[%ld,%ld]\n", timeout->tv_sec, timeout->tv_usec);
+
+        if(evp->ev_flag & EVLIST_TIMEOUT)
+            TAILQ_REMOVE(&timeout_queue, evp, ev_timeout_next);
+
+        struct event* tmp;
+        for(tmp=TAILQ_FIRST(&timeout_queue); tmp != NULL; tmp=TAILQ_NEXT(tmp, ev_timeout_next))
+        {
+            if(!timercmp(&(evp->ev_timeout), &(tmp->ev_timeout), >))
+                break;
+        }
+
+        if(!tmp)
+            TAILQ_INSERT_TAIL(&timeout_queue, evp, ev_timeout_next);
+        else
+            TAILQ_INSERT_BEFORE(tmp, evp, ev_timeout_next);
+
+        evp->ev_flag |= EVLIST_TIMEOUT;
+    }
 
     if(g_event_loop)
     {
@@ -124,6 +155,12 @@ int event_delete(struct event* evp)
         evp->ev_flag &= ~EVLIST_WRITE;
     }
 
+    if(evp->ev_flag & EVLIST_TIMEOUT)
+    {
+        TAILQ_REMOVE(&timeout_queue, evp, ev_timeout_next);
+        evp->ev_flag &= ~EVLIST_TIMEOUT;
+    }
+
     return 0;
 }
 
@@ -161,7 +198,22 @@ int event_dispatch(void)
             g_max_fds = MAX(g_max_fds, evp->ev_fd);
         }
 
-        int ret = select(g_max_fds + 1, &g_read_fds, &g_write_fds, NULL, NULL);
+        struct timeval tv;
+        struct timeval now;
+
+        timerclear(&tv);
+        timerclear(&now);
+
+        gettimeofday(&now, NULL);
+
+        evp = TAILQ_FIRST(&timeout_queue);
+
+        if(!evp)
+            tv.tv_sec = DEFAULT_TIMEOUT;
+        else if(timercmp(&(evp->ev_timeout), &now, >))
+            timersub(&(evp->ev_timeout), &now, &tv);
+
+        int ret = select(g_max_fds + 1, &g_read_fds, &g_write_fds, NULL, &tv);
 
         if(ret < 0)
         {
@@ -217,6 +269,23 @@ int event_dispatch(void)
 
                 evp = next;
             }
+        }
+
+        //struct timeval now;
+        timerclear(&now);
+
+        gettimeofday(&now, NULL);
+
+        while((evp = TAILQ_FIRST(&timeout_queue)) != NULL)
+        {
+            if(timercmp(&(evp->ev_timeout), &now, >))
+                break;
+
+            event_delete(evp);
+            //TAILQ_REMOVE(&timeout_queue, evp, ev_timeout_next);
+            //evp->ev_flag &= ~EVLIST_TIMEOUT;
+
+            evp->ev_callback(evp->ev_fd, EVENT_TIMEOUT, evp->ev_arg);
         }
     }
 
