@@ -22,6 +22,9 @@ fd_set g_write_fds;
 
 int g_event_loop = 0;
 
+int timeout_next(struct timeval* tv);
+int timeout_process(void);
+
 int event_init(void)
 {
     fprintf(stdout, "event_init\n");
@@ -179,6 +182,9 @@ int event_delete(struct event* evp)
 int event_dispatch(void)
 {
     struct event* evp;
+    struct event* next;
+
+    struct timeval tv;
 
     while(1)
     {
@@ -198,20 +204,7 @@ int event_dispatch(void)
             g_max_fds = MAX(g_max_fds, evp->ev_fd);
         }
 
-        struct timeval tv;
-        struct timeval now;
-
-        timerclear(&tv);
-        timerclear(&now);
-
-        gettimeofday(&now, NULL);
-
-        evp = TAILQ_FIRST(&timeout_queue);
-
-        if(!evp)
-            tv.tv_sec = DEFAULT_TIMEOUT;
-        else if(timercmp(&(evp->ev_timeout), &now, >))
-            timersub(&(evp->ev_timeout), &now, &tv);
+        timeout_next(&tv);
 
         int ret = select(g_max_fds + 1, &g_read_fds, &g_write_fds, NULL, &tv);
 
@@ -226,8 +219,6 @@ int event_dispatch(void)
         }
         else
         {
-            struct event* next;
-
             g_event_loop = 1;  // Start
 
             for(evp=TAILQ_FIRST(&read_queue); evp != NULL; )
@@ -237,7 +228,7 @@ int event_dispatch(void)
                 if(FD_ISSET(evp->ev_fd, &g_read_fds))
                 {
                     event_delete(evp);
-                    evp->ev_callback(evp->ev_fd, EVENT_READ, evp->ev_arg);
+                    (*evp->ev_callback)(evp->ev_fd, EVENT_READ, evp->ev_arg);
                 }
 
                 evp = next;
@@ -250,43 +241,81 @@ int event_dispatch(void)
                 if(FD_ISSET(evp->ev_fd, &g_write_fds))
                 {
                     event_delete(evp);
-                    evp->ev_callback(evp->ev_fd, EVENT_WRITE, evp->ev_arg);
+                    (*evp->ev_callback)(evp->ev_fd, EVENT_WRITE, evp->ev_arg);
                 }
 
                 evp = next;
             }
 
             g_event_loop = 0;  // End
-
-            for(evp=TAILQ_FIRST(&add_queue); evp != NULL; )
-            {
-                next = TAILQ_NEXT(evp, ev_add_next);
-
-                TAILQ_REMOVE(&add_queue, evp, ev_add_next);
-                evp->ev_flag &= ~EVLIST_ADD;
-
-                event_add_post(evp);
-
-                evp = next;
-            }
         }
 
-        //struct timeval now;
-        timerclear(&now);
-
-        gettimeofday(&now, NULL);
-
-        while((evp = TAILQ_FIRST(&timeout_queue)) != NULL)
+        for(evp=TAILQ_FIRST(&add_queue); evp != NULL; evp=TAILQ_FIRST(&add_queue))
         {
-            if(timercmp(&(evp->ev_timeout), &now, >))
-                break;
+            TAILQ_REMOVE(&add_queue, evp, ev_add_next);
+            evp->ev_flag &= ~EVLIST_ADD;
 
-            event_delete(evp);
-            //TAILQ_REMOVE(&timeout_queue, evp, ev_timeout_next);
-            //evp->ev_flag &= ~EVLIST_TIMEOUT;
-
-            evp->ev_callback(evp->ev_fd, EVENT_TIMEOUT, evp->ev_arg);
+            event_add_post(evp);
         }
+
+        timeout_process();
+
+    }
+
+    return 0;
+}
+
+int timeout_next(struct timeval* tv)
+{
+    struct timeval now;
+
+    struct event* evp = TAILQ_FIRST(&timeout_queue);
+
+    if(evp == NULL)
+    {
+        timerclear(tv);
+        tv->tv_sec = DEFAULT_TIMEOUT;
+        return 0;
+    }
+
+    if(gettimeofday(&now, NULL) < 0)
+    {
+        timerclear(tv);
+        return -1;
+    }
+
+    if(timercmp(&(evp->ev_timeout), &now, >))
+    {
+        timersub(&(evp->ev_timeout), &now, tv);
+    }
+    else
+    {
+        timerclear(tv);
+    }
+
+    return 0;
+}
+
+int timeout_process(void)
+{
+    struct timeval now;
+
+    if(gettimeofday(&now, NULL) < 0)
+    {
+        return -1;
+    }
+
+    struct event* evp;
+    while((evp = TAILQ_FIRST(&timeout_queue)) != NULL)
+    {
+        if(timercmp(&(evp->ev_timeout), &now, >))
+            break;
+
+        event_delete(evp);
+        //TAILQ_REMOVE(&timeout_queue, evp, ev_timeout_next);
+        //evp->ev_flag &= ~EVLIST_TIMEOUT;
+
+        (*evp->ev_callback)(evp->ev_fd, EVENT_TIMEOUT, evp->ev_arg);
     }
 
     return 0;
