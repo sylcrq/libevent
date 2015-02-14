@@ -1,46 +1,55 @@
 #ifndef _MY_EVENT_H_
 #define _MY_EVENT_H_
 
-#include <sys/queue.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#define EVENT_READ      0x1
-#define EVENT_WRITE     0x2
-#define EVENT_TIMEOUT   0x4
+#define EVENT_READ    0x01
+#define EVENT_WRITE   0x02
+#define EVENT_TIMEOUT 0x04
+#define EVENT_SIGNAL  0x08
 
-#define EVLIST_READ     EVENT_READ
-#define EVLIST_WRITE    EVENT_WRITE
-#define EVLIST_TIMEOUT  EVENT_TIMEOUT
-#define EVLIST_ADD      0x8
-#define EVLIST_INIT     0x10
+#define EVLIST_INIT     0x01
+#define EVLIST_INSERTED 0x02
+#define EVLIST_TIMEOUT  0x04
+#define EVLIST_SIGNAL   0x08
+#define EVLIST_ACTIVE   0x10
 
-#define DEFAULT_TIMEOUT 5
+struct event {
+    TAILQ_ENTRY(event) ev_next;
+    RB_ENTRY(event) ev_timeout_node;
 
-struct event
-{
+    struct event_base* ev_base;
+
     int ev_fd;
-    int ev_type;
-    void* ev_arg;
+    int ev_events;
 
-    void (*ev_callback)(int, int, void*);
-
-    int ev_flag;
+    void (*ev_callback)(void* arg);
 
     struct timeval ev_timeout;
 
-    TAILQ_ENTRY(event) ev_read_next;
-    TAILQ_ENTRY(event) ev_write_next;
-    TAILQ_ENTRY(event) ev_timeout_next;
-    TAILQ_ENTRY(event) ev_add_next;
+    int ev_flags;
 };
 
-int event_init(void);
 
-int event_set(struct event* evp, int fd, int type, void* arg, void (*callback)(int, int, void*));
-int event_add(struct event* evp, struct timeval* timeout);
-int event_delete(struct event* evp);
+struct eventop {
+    const char* name;
+    void* (*init)(void);
+    int (*add)(void*, struct event*);
+    int (*del)(void*, struct event*);
+    // int (*recalc)();
+    // int (*dispatch)();
+};
 
-//void event_traversal(void);
-
+void* event_init(void);
+void event_set(struct event*, int, int, void (*)(void*));
+int event_add(struct event*, struct timeval*);
 int event_dispatch(void);
 
+#ifdef __cplusplus
+}
 #endif
+
+#endif  /* _MY_EVENT_H_ */
+
