@@ -6,7 +6,7 @@ extern "C" {
 #endif
 
 struct event_base {
-    struct eventop* evsel;
+    const struct eventop* evsel;
 
     TAILQ_HEAD(event_list, event) eventqueue;
     RB_HEAD(event_tree, event) timetree;
