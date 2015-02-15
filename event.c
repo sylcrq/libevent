@@ -1,323 +1,163 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/time.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include <sys/queue.h>
+#include <sys/tree.h>
 
 #include "event.h"
+#include "event_internal.h"
 
-#define MAX(a, b)   ((a>b) ? (a) : (b))
-#define MIN(a, b)   ((a<b) ? (a) : (b))
+struct event_base* g_current_base = NULL;
 
-TAILQ_HEAD(event_rlist, event) read_queue;
-TAILQ_HEAD(event_wlist, event) write_queue;
-TAILQ_HEAD(event_tlist, event) timeout_queue;
-TAILQ_HEAD(event_alist, event) add_queue;
+extern const struct eventop selectops;
 
-// Global Variable
-int g_max_fds = 0;
-fd_set g_read_fds;
-fd_set g_write_fds;
+const struct eventop* g_eventops[] = {
+    &selectops,
+    NULL
+};
 
-int g_event_loop = 0;
+void event_queue_insert(struct event_base* base, struct event* ev, int queue);
+void event_queue_remove(struct event_base* base, struct event* ev, int queue);
 
-int timeout_next(struct timeval* tv);
-int timeout_process(void);
-
-int event_init(void)
+int compare(struct event* a, struct event* b)
 {
-    fprintf(stdout, "event_init\n");
+    if(timercmp(&(a->ev_timeout), &(b->ev_timeout), <))
+        return -1;
+    else if(timercmp(&(a->ev_timeout), &(b->ev_timeout), >))
+        return 1;
 
-    TAILQ_INIT(&read_queue);
-    TAILQ_INIT(&write_queue);
-    TAILQ_INIT(&timeout_queue);
-    TAILQ_INIT(&add_queue);
+    if(a < b)
+        return -1;
+    else if(a > b)
+        return 1;
 
     return 0;
 }
 
-int event_set(struct event* evp, int fd, int type, void* arg, void (*callback)(int, int, void*))
+RB_PROTOTYPE(event_tree, event, ev_timeout_node, compare);
+RB_GENERATE(event_tree, event, ev_timeout_node, compare);
+
+// 初始化
+void* event_init(void)
 {
-    if(!evp)
+    g_current_base = calloc(1, sizeof(struct event_base));
+    if(!g_current_base)
     {
-        return -1;
+        printf("calloc failed\n");
+        exit(1);
     }
 
-    evp->ev_fd = fd;
-    evp->ev_type = type;
-    evp->ev_arg = arg;
-    evp->ev_callback = callback;
-    evp->ev_flag = EVLIST_INIT;
+    TAILQ_INIT(&(g_current_base->eventqueue));
+    RB_INIT(&(g_current_base->timetree));
 
-    return 0;
+    g_current_base->evsel = NULL;
+
+    int i;
+    for(i=0; g_eventops[i] && !(g_current_base->evsel); i++)
+    {
+        g_current_base->evsel = g_eventops[i];
+        g_current_base->evsel->init();
+    }
+
+    if(!(g_current_base->evsel))
+    {
+        printf("no event mechanism available\n");
+        exit(1);
+    }
+
+    return g_current_base;
 }
 
-int event_add_post(struct event* evp)
+void event_set(struct event* ev, int fd, int events, void (*callback)(void* arg))
 {
-    if(!evp)
-    {
-        return -1;
-    }
+    if(!ev) return;
 
-    fprintf(stdout, "event_add_post: %p[%d, %d]\n", evp, evp->ev_fd, evp->ev_type);
+    ev->ev_base = g_current_base;
 
-    if( (evp->ev_type & EVENT_READ) && !(evp->ev_flag & EVLIST_READ) )
-    {
-        TAILQ_INSERT_TAIL(&read_queue, evp, ev_read_next);
-        evp->ev_flag |= EVLIST_READ;
-    }
+    ev->ev_fd = fd;
+    ev->ev_events = events;
+    ev->ev_callback = callback;
 
-    if( (evp->ev_type & EVENT_WRITE) && !(evp->ev_flag & EVLIST_WRITE) )
-    {
-        TAILQ_INSERT_TAIL(&write_queue, evp, ev_write_next);
-        evp->ev_flag |= EVLIST_WRITE;
-    }
-
-    return 0;
+    ev->ev_flags = EVLIST_INIT;
 }
 
-int event_add(struct event* evp, struct timeval* timeout)
+int event_add(struct event* ev, struct timeval* tv)
 {
-    if(!evp)
-    {
-        return -1;
-    }
+    if(!ev) return -1;
 
-    fprintf(stdout, "event_add: %p[%d, %d]\n", evp, evp->ev_fd, evp->ev_type);
+    struct event_base* base = ev->ev_base;
 
-    if(timeout != NULL)
+    if(tv != NULL)
     {
         struct timeval now;
-        timerclear(&now);
+
+        if(ev->ev_flags & EVLIST_TIMEOUT)
+            event_queue_remove(base, ev, EVLIST_TIMEOUT);
 
         gettimeofday(&now, NULL);
+        timeradd(tv, &now, &(ev->ev_timeout));
 
-        timeradd(&now, timeout, &(evp->ev_timeout));
-
-        fprintf(stdout, "event_add: timeout=[%ld,%ld]\n", timeout->tv_sec, timeout->tv_usec);
-
-        if(evp->ev_flag & EVLIST_TIMEOUT)
-            TAILQ_REMOVE(&timeout_queue, evp, ev_timeout_next);
-
-        struct event* tmp;
-        for(tmp=TAILQ_FIRST(&timeout_queue); tmp != NULL; tmp=TAILQ_NEXT(tmp, ev_timeout_next))
-        {
-            if(!timercmp(&(evp->ev_timeout), &(tmp->ev_timeout), >))
-                break;
-        }
-
-        if(!tmp)
-            TAILQ_INSERT_TAIL(&timeout_queue, evp, ev_timeout_next);
-        else
-            TAILQ_INSERT_BEFORE(tmp, evp, ev_timeout_next);
-
-        evp->ev_flag |= EVLIST_TIMEOUT;
+        event_queue_insert(base, ev, EVLIST_TIMEOUT);
     }
 
-    if(g_event_loop)
+    if((ev->ev_events & (EVENT_READ|EVENT_WRITE)) && 
+       !(ev->ev_flags & EVLIST_INSERTED))
     {
-        if(evp->ev_flag & EVLIST_ADD)
-            return 0;
-
-        TAILQ_INSERT_TAIL(&add_queue, evp, ev_add_next);
-        evp->ev_flag |= EVLIST_ADD;
-    }
-    else
-    {
-        event_add_post(evp);
+        event_queue_insert(base, ev, EVLIST_INSERTED);
+        // add
     }
 
     return 0;
 }
-
-int event_delete(struct event* evp)
-{
-    if(!evp)
-    {
-        return -1;
-    }
-
-    fprintf(stdout, "event_delete: %p[%d, %d]\n", evp, evp->ev_fd, evp->ev_type);
-
-    if(evp->ev_flag & EVLIST_ADD)
-    {
-        TAILQ_REMOVE(&add_queue, evp, ev_add_next);
-        evp->ev_flag &= ~EVLIST_ADD;
-    }
-
-    if(evp->ev_flag & EVLIST_READ)
-    {
-        TAILQ_REMOVE(&read_queue, evp, ev_read_next);
-        evp->ev_flag &= ~EVLIST_READ;
-    }
-
-    if(evp->ev_flag & EVLIST_WRITE)
-    {
-        TAILQ_REMOVE(&write_queue, evp, ev_write_next);
-        evp->ev_flag &= ~EVLIST_WRITE;
-    }
-
-    if(evp->ev_flag & EVLIST_TIMEOUT)
-    {
-        TAILQ_REMOVE(&timeout_queue, evp, ev_timeout_next);
-        evp->ev_flag &= ~EVLIST_TIMEOUT;
-    }
-
-    return 0;
-}
-
-//void event_traversal(void)
-//{
-//    struct event* evp = NULL;
-//
-//    for(evp = queue.tqh_first; evp != NULL; evp = evp->ev_next.tqe_next)
-//    {
-//        printf("%d -> ", evp->value);
-//    }
-//
-//    printf("null\n");
-//}
 
 int event_dispatch(void)
 {
-    struct event* evp;
-    struct event* next;
-
-    struct timeval tv;
-
-    while(1)
-    {
-        g_max_fds = 0;
-        FD_ZERO(&g_read_fds);
-        FD_ZERO(&g_write_fds);
-
-        TAILQ_FOREACH(evp, &read_queue, ev_read_next)
-        {
-            FD_SET(evp->ev_fd, &g_read_fds);
-            g_max_fds = MAX(g_max_fds, evp->ev_fd);
-        }
-
-        TAILQ_FOREACH(evp, &write_queue, ev_write_next)
-        {
-            FD_SET(evp->ev_fd, &g_write_fds);
-            g_max_fds = MAX(g_max_fds, evp->ev_fd);
-        }
-
-        timeout_next(&tv);
-
-        int ret = select(g_max_fds + 1, &g_read_fds, &g_write_fds, NULL, &tv);
-
-        if(ret < 0)
-        {
-            fprintf(stderr, "select error\n");
-            return -1;
-        }
-        else if(ret == 0)
-        {
-            fprintf(stdout, "nothing happen\n");
-        }
-        else
-        {
-            g_event_loop = 1;  // Start
-
-            for(evp=TAILQ_FIRST(&read_queue); evp != NULL; )
-            {
-                next = TAILQ_NEXT(evp, ev_read_next);
-
-                if(FD_ISSET(evp->ev_fd, &g_read_fds))
-                {
-                    event_delete(evp);
-                    (*evp->ev_callback)(evp->ev_fd, EVENT_READ, evp->ev_arg);
-                }
-
-                evp = next;
-            }
-
-            for(evp=TAILQ_FIRST(&write_queue); evp != NULL; )
-            {
-                next = TAILQ_NEXT(evp, ev_write_next);
-
-                if(FD_ISSET(evp->ev_fd, &g_write_fds))
-                {
-                    event_delete(evp);
-                    (*evp->ev_callback)(evp->ev_fd, EVENT_WRITE, evp->ev_arg);
-                }
-
-                evp = next;
-            }
-
-            g_event_loop = 0;  // End
-        }
-
-        for(evp=TAILQ_FIRST(&add_queue); evp != NULL; evp=TAILQ_FIRST(&add_queue))
-        {
-            TAILQ_REMOVE(&add_queue, evp, ev_add_next);
-            evp->ev_flag &= ~EVLIST_ADD;
-
-            event_add_post(evp);
-        }
-
-        timeout_process();
-
-    }
-
     return 0;
 }
 
-int timeout_next(struct timeval* tv)
+void event_queue_insert(struct event_base* base, struct event* ev, int queue)
 {
-    struct timeval now;
-
-    struct event* evp = TAILQ_FIRST(&timeout_queue);
-
-    if(evp == NULL)
+    if(ev->ev_flags & queue)
     {
-        timerclear(tv);
-        tv->tv_sec = DEFAULT_TIMEOUT;
-        return 0;
+        printf("already on queue\n");
+        return;
     }
 
-    if(gettimeofday(&now, NULL) < 0)
+    switch(queue)
     {
-        timerclear(tv);
-        return -1;
+    case EVLIST_TIMEOUT:
+        RB_INSERT(event_tree, &(base->timetree), ev);
+        break;
+    case EVLIST_INSERTED:
+        TAILQ_INSERT_TAIL(&(base->eventqueue), ev, ev_next);
+        break;
+    default:
+        printf("unknown queue\n");
     }
 
-    if(timercmp(&(evp->ev_timeout), &now, >))
-    {
-        timersub(&(evp->ev_timeout), &now, tv);
-    }
-    else
-    {
-        timerclear(tv);
-    }
-
-    return 0;
+    ev->ev_flags |= queue;
 }
 
-int timeout_process(void)
+void event_queue_remove(struct event_base* base, struct event* ev, int queue)
 {
-    struct timeval now;
-
-    if(gettimeofday(&now, NULL) < 0)
+    if(!(ev->ev_flags & queue))
     {
-        return -1;
+        printf("not on queue\n");
+        return;
     }
 
-    struct event* evp;
-    while((evp = TAILQ_FIRST(&timeout_queue)) != NULL)
+    switch(queue)
     {
-        if(timercmp(&(evp->ev_timeout), &now, >))
-            break;
-
-        event_delete(evp);
-        //TAILQ_REMOVE(&timeout_queue, evp, ev_timeout_next);
-        //evp->ev_flag &= ~EVLIST_TIMEOUT;
-
-        (*evp->ev_callback)(evp->ev_fd, EVENT_TIMEOUT, evp->ev_arg);
+    case EVLIST_TIMEOUT:
+        RB_REMOVE(event_tree, &(base->timetree), ev);
+        break;
+    case EVLIST_INSERTED:
+        TAILQ_REMOVE(&(base->eventqueue), ev, ev_next);
+        break;
+    default:
+        printf("unknown queue\n");
     }
 
-    return 0;
+    ev->ev_flags &= ~queue;
 }
 

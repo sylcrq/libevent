@@ -1,7 +1,10 @@
+CFLAGS = -Wall -g -O0
+
 all:
-	gcc -c -Wall -g -O0 event.c
-	gcc -c -Wall -g -O0 event_test.c
-	gcc -o test event.o event_test.o
+	gcc ${CFLAGS} -I./include -c event.c
+	gcc ${CFLAGS} -I./include -c select.c
+	gcc ${CFLAGS} -c test/event_test.c
+	gcc -o evtest event.o select.o event_test.o
 
 clean:
-	rm -f *.o test
+	rm -f *.o evtest
