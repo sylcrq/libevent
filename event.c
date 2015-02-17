@@ -9,10 +9,10 @@
 
 struct event_base* g_current_base = NULL;
 
-extern const struct eventop selectops;
+extern const struct eventop g_selectops;
 
 const struct eventop* g_eventops[] = {
-    &selectops,
+    &g_selectops,
     NULL
 };
 
