@@ -111,11 +111,11 @@ int event_add(struct event* ev, struct timeval* tv)
         event_queue_insert(base, ev, EVLIST_TIMEOUT);
     }
 
-    if((ev->ev_events & (EVENT_READ|EVENT_WRITE)) && 
+    if((ev->ev_events & (EVENT_READ|EVENT_WRITE)) &&
        !(ev->ev_flags & (EVLIST_INSERTED|EVLIST_ACTIVE)))
     {
         event_queue_insert(base, ev, EVLIST_INSERTED);
-        
+
         return evsel->add(evbase, ev);
     }
 
@@ -124,7 +124,30 @@ int event_add(struct event* ev, struct timeval* tv)
 
 int event_dispatch(void)
 {
-    // TODO:
+    struct event_base* base = g_current_base;
+    const struct eventop* evsel = base->evsel;
+    void* evbase = base->evbase;
+
+    struct timeval tv;
+
+    if(evsel->recalc(base, evbase, 0) < 0)
+        return -1;
+
+    while(1)
+    {
+        // TODO:
+
+        int ret = evsel->dispatch(base, evbase, &tv);
+
+        if(ret < 0)
+            return -1;
+
+        // TODO:
+
+        if(evsel->recalc(base, evbase, 0) < 0)
+            return -1;
+    }
+
     return 0;
 }
 
@@ -212,9 +235,31 @@ int event_base_priority_init(struct event_base* base, int npriorities)
 
 int event_del(struct event* ev)
 {
+    struct event_base* base = ev->ev_base;
+    const struct eventop* evsel = base->evsel;
+    void* evbase = base->evbase;
+
+    assert(!(ev->ev_flags & ~EVLIST_ALL));
+
+    if(ev->ev_flags & EVLIST_TIMEOUT)
+        event_queue_remove(base, ev, EVLIST_TIMEOUT);
+
+    if(ev->ev_flags & EVLIST_ACTIVE)
+        event_queue_remove(base, ev, EVLIST_ACTIVE);
+
+    if(ev->ev_flags & EVLIST_INSERTED)
+    {
+        event_queue_remove(base, ev, EVLIST_INSERTED);
+        return evsel->del(evbase, ev);
+    }
     return 0;
 }
 
 void event_active(struct event* ev)
 {
+    if(ev->ev_flags & EVLIST_ACTIVE)
+        return;
+
+    event_queue_insert(ev->ev_base, ev, EVLIST_ACTIVE);
 }
+
