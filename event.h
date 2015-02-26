@@ -16,8 +16,11 @@ extern "C" {
 #define EVLIST_SIGNAL   0x08
 #define EVLIST_ACTIVE   0x10
 
+#define EVLIST_ALL      0x1F
+
 struct event {
     TAILQ_ENTRY(event) ev_next;
+    TAILQ_ENTRY(event) ev_active_next;
     RB_ENTRY(event) ev_timeout_node;
 
     struct event_base* ev_base;
@@ -30,6 +33,8 @@ struct event {
     struct timeval ev_timeout;
 
     int ev_flags;
+
+    int ev_pri;
 };
 
 
@@ -46,6 +51,8 @@ void* event_init(void);
 void event_set(struct event*, int, int, void (*)(void*));
 int event_add(struct event*, struct timeval*);
 int event_dispatch(void);
+
+int event_base_priority_init(struct event_base*, int);
 
 #ifdef __cplusplus
 }

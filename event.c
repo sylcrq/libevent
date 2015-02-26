@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
@@ -51,19 +52,22 @@ void* event_init(void)
     RB_INIT(&(g_current_base->timetree));
 
     g_current_base->evsel = NULL;
+    g_current_base->evbase = NULL;
 
-    int i;
-    for(i=0; g_eventops[i] && !(g_current_base->evsel); i++)
+    int i = 0;
+    for(i=0; g_eventops[i] && !(g_current_base->evbase); i++)
     {
         g_current_base->evsel = g_eventops[i];
-        g_current_base->evsel->init();
+        g_current_base->evbase = g_current_base->evsel->init();
     }
 
-    if(!(g_current_base->evsel))
+    if(g_current_base->evbase == NULL)
     {
         printf("no event mechanism available\n");
         exit(1);
     }
+
+    event_base_priority_init(g_current_base, 1);
 
     return g_current_base;
 }
@@ -77,8 +81,9 @@ void event_set(struct event* ev, int fd, int events, void (*callback)(void* arg)
     ev->ev_fd = fd;
     ev->ev_events = events;
     ev->ev_callback = callback;
-
     ev->ev_flags = EVLIST_INIT;
+
+    ev->ev_pri = g_current_base->nactivequeues/2;
 }
 
 int event_add(struct event* ev, struct timeval* tv)
@@ -86,6 +91,10 @@ int event_add(struct event* ev, struct timeval* tv)
     if(!ev) return -1;
 
     struct event_base* base = ev->ev_base;
+    const struct eventop* evsel = base->evsel;
+    void* evbase = base->evbase;
+
+    assert(!(ev->ev_flags & ~EVLIST_ALL));
 
     if(tv != NULL)
     {
@@ -94,6 +103,8 @@ int event_add(struct event* ev, struct timeval* tv)
         if(ev->ev_flags & EVLIST_TIMEOUT)
             event_queue_remove(base, ev, EVLIST_TIMEOUT);
 
+        // TODO:
+
         gettimeofday(&now, NULL);
         timeradd(tv, &now, &(ev->ev_timeout));
 
@@ -101,10 +112,11 @@ int event_add(struct event* ev, struct timeval* tv)
     }
 
     if((ev->ev_events & (EVENT_READ|EVENT_WRITE)) && 
-       !(ev->ev_flags & EVLIST_INSERTED))
+       !(ev->ev_flags & (EVLIST_INSERTED|EVLIST_ACTIVE)))
     {
         event_queue_insert(base, ev, EVLIST_INSERTED);
-        // add
+        
+        return evsel->add(evbase, ev);
     }
 
     return 0;
@@ -112,6 +124,7 @@ int event_add(struct event* ev, struct timeval* tv)
 
 int event_dispatch(void)
 {
+    // TODO:
     return 0;
 }
 
@@ -119,20 +132,30 @@ void event_queue_insert(struct event_base* base, struct event* ev, int queue)
 {
     if(ev->ev_flags & queue)
     {
+        if(queue & EVLIST_ACTIVE)
+            return;
+
         printf("already on queue\n");
-        return;
+        exit(1);
     }
 
     switch(queue)
     {
     case EVLIST_TIMEOUT:
-        RB_INSERT(event_tree, &(base->timetree), ev);
+    {
+        struct event* tmp = RB_INSERT(event_tree, &(base->timetree), ev);
+        assert(tmp == NULL);
         break;
+    }
     case EVLIST_INSERTED:
         TAILQ_INSERT_TAIL(&(base->eventqueue), ev, ev_next);
         break;
+    case EVLIST_ACTIVE:
+        TAILQ_INSERT_TAIL(&(base->activequeues[ev->ev_pri]), ev, ev_active_next);
+        break;
     default:
         printf("unknown queue\n");
+        exit(1);
     }
 
     ev->ev_flags |= queue;
@@ -143,7 +166,7 @@ void event_queue_remove(struct event_base* base, struct event* ev, int queue)
     if(!(ev->ev_flags & queue))
     {
         printf("not on queue\n");
-        return;
+        exit(1);
     }
 
     switch(queue)
@@ -154,10 +177,36 @@ void event_queue_remove(struct event_base* base, struct event* ev, int queue)
     case EVLIST_INSERTED:
         TAILQ_REMOVE(&(base->eventqueue), ev, ev_next);
         break;
+    case EVLIST_ACTIVE:
+        TAILQ_REMOVE(&(base->activequeues[ev->ev_pri]), ev, ev_active_next);
+        break;
     default:
         printf("unknown queue\n");
+        exit(1);
     }
 
     ev->ev_flags &= ~queue;
+}
+
+int event_base_priority_init(struct event_base* base, int npriorities)
+{
+    if(base->activequeues)
+        free(base->activequeues);
+
+    base->nactivequeues = npriorities;
+    base->activequeues = (struct event_list*)calloc(npriorities, sizeof(struct event_list));
+    if(base->activequeues == NULL)
+    {
+        printf("calloc failed");
+        exit(1);
+    }
+
+    int i = 0;
+    for(i=0; i<npriorities; i++)
+    {
+        TAILQ_INIT(&(base->activequeues[i]));
+    }
+
+    return 0;
 }
 

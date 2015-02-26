@@ -21,6 +21,8 @@ const struct eventop g_selectops = {
     select_init,
     select_add,
     select_del
+    // select_recalc
+    // select_dispatch
 };
 
 struct selectop {

@@ -5,10 +5,17 @@
 extern "C" {
 #endif
 
+TAILQ_HEAD(event_list, event);
+
 struct event_base {
     const struct eventop* evsel;
+    void* evbase;
 
-    TAILQ_HEAD(event_list, event) eventqueue;
+    struct event_list* activequeues;
+    int nactivequeues;
+
+    struct event_list eventqueue;
+
     RB_HEAD(event_tree, event) timetree;
 };
 
