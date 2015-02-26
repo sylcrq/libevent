@@ -210,3 +210,11 @@ int event_base_priority_init(struct event_base* base, int npriorities)
     return 0;
 }
 
+int event_del(struct event* ev)
+{
+    return 0;
+}
+
+void event_active(struct event* ev)
+{
+}

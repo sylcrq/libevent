@@ -9,6 +9,7 @@ extern "C" {
 #define EVENT_WRITE   0x02
 #define EVENT_TIMEOUT 0x04
 #define EVENT_SIGNAL  0x08
+#define EVENT_PERSIST 0x10
 
 #define EVLIST_INIT     0x01
 #define EVLIST_INSERTED 0x02
@@ -43,13 +44,15 @@ struct eventop {
     void* (*init)(void);
     int (*add)(void*, struct event*);
     int (*del)(void*, struct event*);
-    // int (*recalc)();
-    // int (*dispatch)();
+    int (*recalc)(struct event_base*, void*, int);
+    int (*dispatch)(struct event_base*, void*, struct timeval*);
 };
 
 void* event_init(void);
 void event_set(struct event*, int, int, void (*)(void*));
 int event_add(struct event*, struct timeval*);
+int event_del(struct event*);
+void event_active(struct event*);
 int event_dispatch(void);
 
 int event_base_priority_init(struct event_base*, int);
