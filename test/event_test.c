@@ -1,8 +1,77 @@
+#include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include <sys/queue.h>
+#include <sys/tree.h>
+
+#include <event.h>
+
+void fifo_read(int fd, int events, void* arg)
+{
+    char buf[255] = {0};
+
+    printf("fifo_read called\n");
+
+    int len = read(fd, buf, sizeof(buf)-1);
+
+    if(len == -1)
+    {
+        printf("read\n");
+        return;
+    }
+    else if(len == 0)
+    {
+        printf("connection closed\n");
+        return;
+    }
+
+    buf[len] = '\0';
+    printf("Read: %s\n", buf);
+}
 
 int main()
 {
-    printf("hello world\n");
+    struct event evfifo;
+    struct stat st;
+    char* fifo = "event.fifo";
+
+    if(lstat(fifo, &st) == 0)
+    {
+        if((st.st_mode & S_IFMT) == S_IFREG)
+        {
+            printf("lstat");
+            exit(1);
+        }
+    }
+
+    unlink(fifo);
+
+    if(mkfifo(fifo, 0600) == -1)
+    {
+        printf("mkfifo");
+        exit(1);
+    }
+
+    int socket;
+    socket = open(fifo, O_RDWR|O_NONBLOCK, 0);
+
+    if(socket == -1)
+    {
+        printf("open");
+        exit(1);
+    }
+
+    event_init();
+    event_set(&evfifo, socket, EVENT_READ, fifo_read);
+
+    event_add(&evfifo, NULL);
+
+    event_dispatch();
 
     return 0;
 }

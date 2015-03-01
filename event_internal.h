@@ -11,6 +11,9 @@ struct event_base {
     const struct eventop* evsel;
     void* evbase;
 
+    int event_count;
+    int event_count_active;
+
     struct event_list* activequeues;
     int nactivequeues;
 

@@ -29,13 +29,15 @@ struct event {
     int ev_fd;
     int ev_events;
 
-    void (*ev_callback)(void* arg);
+    void (*ev_callback)(int, int, void* arg);
 
     struct timeval ev_timeout;
 
     int ev_flags;
 
     int ev_pri;
+
+    void* ev_arg;
 };
 
 
@@ -49,7 +51,7 @@ struct eventop {
 };
 
 void* event_init(void);
-void event_set(struct event*, int, int, void (*)(void*));
+void event_set(struct event*, int, int, void (*)(int, int, void*));
 int event_add(struct event*, struct timeval*);
 int event_del(struct event*);
 void event_active(struct event*);

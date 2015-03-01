@@ -20,6 +20,11 @@ const struct eventop* g_eventops[] = {
 void event_queue_insert(struct event_base* base, struct event* ev, int queue);
 void event_queue_remove(struct event_base* base, struct event* ev, int queue);
 
+void event_process_active(struct event_base* base);
+
+int timeout_next(struct event_base* base, struct timeval* tv);
+void timeout_process(struct event_base* base);
+
 int compare(struct event* a, struct event* b)
 {
     if(timercmp(&(a->ev_timeout), &(b->ev_timeout), <))
@@ -38,7 +43,7 @@ int compare(struct event* a, struct event* b)
 RB_PROTOTYPE(event_tree, event, ev_timeout_node, compare);
 RB_GENERATE(event_tree, event, ev_timeout_node, compare);
 
-// 初始化
+// 初始化一个全局struct event_base
 void* event_init(void)
 {
     g_current_base = calloc(1, sizeof(struct event_base));
@@ -54,6 +59,9 @@ void* event_init(void)
     g_current_base->evsel = NULL;
     g_current_base->evbase = NULL;
 
+    g_current_base->event_count = 0;
+    g_current_base->event_count_active = 0;
+
     int i = 0;
     for(i=0; g_eventops[i] && !(g_current_base->evbase); i++)
     {
@@ -67,14 +75,15 @@ void* event_init(void)
         exit(1);
     }
 
+    // 初始化默认优先级队列个数为1
     event_base_priority_init(g_current_base, 1);
 
     return g_current_base;
 }
 
-void event_set(struct event* ev, int fd, int events, void (*callback)(void* arg))
+void event_set(struct event* ev, int fd, int events, void (*callback)(int, int, void*))
 {
-    if(!ev) return;
+    //if(!ev) return;
 
     ev->ev_base = g_current_base;
 
@@ -83,12 +92,13 @@ void event_set(struct event* ev, int fd, int events, void (*callback)(void* arg)
     ev->ev_callback = callback;
     ev->ev_flags = EVLIST_INIT;
 
+    // event默认优先级
     ev->ev_pri = g_current_base->nactivequeues/2;
 }
 
 int event_add(struct event* ev, struct timeval* tv)
 {
-    if(!ev) return -1;
+    //if(!ev) return -1;
 
     struct event_base* base = ev->ev_base;
     const struct eventop* evsel = base->evsel;
@@ -102,8 +112,6 @@ int event_add(struct event* ev, struct timeval* tv)
 
         if(ev->ev_flags & EVLIST_TIMEOUT)
             event_queue_remove(base, ev, EVLIST_TIMEOUT);
-
-        // TODO:
 
         gettimeofday(&now, NULL);
         timeradd(tv, &now, &(ev->ev_timeout));
@@ -135,14 +143,20 @@ int event_dispatch(void)
 
     while(1)
     {
-        // TODO:
+        //gettimeofday(&tv, NULL);
+        timeout_next(base, &tv);
 
         int ret = evsel->dispatch(base, evbase, &tv);
 
         if(ret < 0)
             return -1;
 
-        // TODO:
+        timeout_process(base);
+
+        if(base->event_count_active)
+        {
+            event_process_active(base);
+        }
 
         if(evsel->recalc(base, evbase, 0) < 0)
             return -1;
@@ -162,6 +176,10 @@ void event_queue_insert(struct event_base* base, struct event* ev, int queue)
         exit(1);
     }
 
+    base->event_count++;
+
+    ev->ev_flags |= queue;
+
     switch(queue)
     {
     case EVLIST_TIMEOUT:
@@ -174,14 +192,13 @@ void event_queue_insert(struct event_base* base, struct event* ev, int queue)
         TAILQ_INSERT_TAIL(&(base->eventqueue), ev, ev_next);
         break;
     case EVLIST_ACTIVE:
+        base->event_count_active++;
         TAILQ_INSERT_TAIL(&(base->activequeues[ev->ev_pri]), ev, ev_active_next);
         break;
     default:
         printf("unknown queue\n");
         exit(1);
     }
-
-    ev->ev_flags |= queue;
 }
 
 void event_queue_remove(struct event_base* base, struct event* ev, int queue)
@@ -192,6 +209,10 @@ void event_queue_remove(struct event_base* base, struct event* ev, int queue)
         exit(1);
     }
 
+    base->event_count--;
+
+    ev->ev_flags &= ~queue;
+
     switch(queue)
     {
     case EVLIST_TIMEOUT:
@@ -201,18 +222,20 @@ void event_queue_remove(struct event_base* base, struct event* ev, int queue)
         TAILQ_REMOVE(&(base->eventqueue), ev, ev_next);
         break;
     case EVLIST_ACTIVE:
+        base->event_count_active--;
         TAILQ_REMOVE(&(base->activequeues[ev->ev_pri]), ev, ev_active_next);
         break;
     default:
         printf("unknown queue\n");
         exit(1);
     }
-
-    ev->ev_flags &= ~queue;
 }
 
 int event_base_priority_init(struct event_base* base, int npriorities)
 {
+    if(base->event_count_active)
+        return -1;
+
     if(base->activequeues)
         free(base->activequeues);
 
@@ -252,6 +275,7 @@ int event_del(struct event* ev)
         event_queue_remove(base, ev, EVLIST_INSERTED);
         return evsel->del(evbase, ev);
     }
+
     return 0;
 }
 
@@ -261,5 +285,76 @@ void event_active(struct event* ev)
         return;
 
     event_queue_insert(ev->ev_base, ev, EVLIST_ACTIVE);
+}
+
+int timeout_next(struct event_base* base, struct timeval* tv)
+{
+    struct timeval default_timeout = {5, 0};  // 5s
+
+    struct event* ev = RB_MIN(event_tree, &(base->timetree));
+    if(ev == NULL)
+    {
+        *tv = default_timeout;
+        return 0;
+    }
+
+    struct timeval now;
+    gettimeofday(&now, NULL);
+
+    if(timercmp(&(ev->ev_timeout), &now, <))
+    {
+        timerclear(tv);
+        return 0;
+    }
+
+    timersub(&(ev->ev_timeout), &now, tv);
+
+    return 0;
+}
+
+void timeout_process(struct event_base* base)
+{
+    struct event* ev = NULL;
+    struct event* next = NULL;
+
+    struct timeval now;
+    gettimeofday(&now, NULL);
+
+    for(ev=RB_MIN(event_tree, &(base->timetree)); ev != NULL; ev=next)
+    {
+        if(timercmp(&(ev->ev_timeout), &now, >))
+            break;
+
+        next = RB_NEXT(event_tree, &(base->timetree), ev);
+
+        event_del(ev);
+        event_active(ev);
+    }
+}
+
+void event_process_active(struct event_base* base)
+{
+    struct event* ev = NULL;
+    struct event_list* activeq = NULL;
+
+    if(base->event_count_active == 0)
+        return;
+
+    int i = 0;
+    for(i=0; i<base->nactivequeues; i++)
+    {
+        if(TAILQ_FIRST(&(base->activequeues[i])) != NULL)
+        {
+            activeq = &(base->activequeues[i]);
+            break;
+        }
+    }
+
+    for(ev=TAILQ_FIRST(activeq); ev != NULL; ev=TAILQ_FIRST(activeq))
+    {
+        event_queue_remove(base, ev, EVLIST_ACTIVE);
+
+        (*ev->ev_callback)(ev->ev_fd, ev->ev_events, ev->ev_arg);
+    }
 }
 
