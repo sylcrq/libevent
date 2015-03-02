@@ -1,9 +1,11 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/time.h>
 #include <sys/queue.h>
 #include <sys/tree.h>
+#include <time.h>
 
 #include "event.h"
 #include "event_internal.h"
@@ -17,6 +19,7 @@ const struct eventop* g_eventops[] = {
     NULL
 };
 
+/* prototypes */
 void event_queue_insert(struct event_base* base, struct event* ev, int queue);
 void event_queue_remove(struct event_base* base, struct event* ev, int queue);
 
@@ -24,6 +27,20 @@ void event_process_active(struct event_base* base);
 
 int timeout_next(struct event_base* base, struct timeval* tv);
 void timeout_process(struct event_base* base);
+
+// 将struct timeval转换为字符串
+char g_timebuf[64] = {0};
+char* timeval_to_str(struct timeval* ptv)
+{
+    char tmp[64] = {0};
+    memset(g_timebuf, 0, sizeof(g_timebuf));
+
+    struct tm* nowtime = localtime(&(ptv->tv_sec));
+    strftime(tmp, sizeof(tmp), "%Y-%m-%d %H:%M:%S", nowtime);
+    snprintf(g_timebuf, sizeof(g_timebuf), "%s.%06d", tmp, ptv->tv_usec);
+
+    return g_timebuf;
+}
 
 int compare(struct event* a, struct event* b)
 {
@@ -46,6 +63,8 @@ RB_GENERATE(event_tree, event, ev_timeout_node, compare);
 // 初始化一个全局struct event_base
 void* event_init(void)
 {
+    printf("event_init\n");
+
     g_current_base = calloc(1, sizeof(struct event_base));
     if(!g_current_base)
     {
@@ -92,6 +111,8 @@ void event_set(struct event* ev, int fd, int events, void (*callback)(int, int, 
     ev->ev_callback = callback;
     ev->ev_flags = EVLIST_INIT;
 
+    ev->ev_arg = ev;
+    ev->ev_res = 0;
     // event默认优先级
     ev->ev_pri = g_current_base->nactivequeues/2;
 }
@@ -99,6 +120,8 @@ void event_set(struct event* ev, int fd, int events, void (*callback)(int, int, 
 int event_add(struct event* ev, struct timeval* tv)
 {
     //if(!ev) return -1;
+    printf("event_add: ev=%p, tv=%s\n", ev, 
+           (tv==NULL) ? "NULL" : timeval_to_str(tv));
 
     struct event_base* base = ev->ev_base;
     const struct eventop* evsel = base->evsel;
@@ -132,6 +155,8 @@ int event_add(struct event* ev, struct timeval* tv)
 
 int event_dispatch(void)
 {
+    printf("event_dispatch\n");
+
     struct event_base* base = g_current_base;
     const struct eventop* evsel = base->evsel;
     void* evbase = base->evbase;
@@ -144,7 +169,10 @@ int event_dispatch(void)
     while(1)
     {
         //gettimeofday(&tv, NULL);
-        timeout_next(base, &tv);
+        if(base->event_count_active == 0)
+            timeout_next(base, &tv);
+        else
+            timerclear(&tv);
 
         int ret = evsel->dispatch(base, evbase, &tv);
 
@@ -176,6 +204,8 @@ void event_queue_insert(struct event_base* base, struct event* ev, int queue)
         exit(1);
     }
 
+    printf("event_queue_insert: ev=%p, list=0x%.2x\n", ev, queue);
+
     base->event_count++;
 
     ev->ev_flags |= queue;
@@ -199,6 +229,9 @@ void event_queue_insert(struct event_base* base, struct event* ev, int queue)
         printf("unknown queue\n");
         exit(1);
     }
+
+    printf("event_queue_insert: event_count=%d, event_count_active=%d\n", 
+           base->event_count, base->event_count_active);
 }
 
 void event_queue_remove(struct event_base* base, struct event* ev, int queue)
@@ -208,6 +241,8 @@ void event_queue_remove(struct event_base* base, struct event* ev, int queue)
         printf("not on queue\n");
         exit(1);
     }
+
+    printf("event_queue_remove: ev=%p, list=0x%.2x\n", ev, queue);
 
     base->event_count--;
 
@@ -229,10 +264,15 @@ void event_queue_remove(struct event_base* base, struct event* ev, int queue)
         printf("unknown queue\n");
         exit(1);
     }
+
+    printf("event_queue_remove: event_count=%d, event_count_active=%d\n", 
+           base->event_count, base->event_count_active);
 }
 
 int event_base_priority_init(struct event_base* base, int npriorities)
 {
+    printf("event_base_priority_init: %d\n", npriorities);
+
     if(base->event_count_active)
         return -1;
 
@@ -258,6 +298,8 @@ int event_base_priority_init(struct event_base* base, int npriorities)
 
 int event_del(struct event* ev)
 {
+    printf("event_del: ev=%p\n", ev);
+
     struct event_base* base = ev->ev_base;
     const struct eventop* evsel = base->evsel;
     void* evbase = base->evbase;
@@ -281,6 +323,8 @@ int event_del(struct event* ev)
 
 void event_active(struct event* ev)
 {
+    printf("event_active: ev=%p\n", ev);
+
     if(ev->ev_flags & EVLIST_ACTIVE)
         return;
 
@@ -354,7 +398,7 @@ void event_process_active(struct event_base* base)
     {
         event_queue_remove(base, ev, EVLIST_ACTIVE);
 
-        (*ev->ev_callback)(ev->ev_fd, ev->ev_events, ev->ev_arg);
+        (*ev->ev_callback)(ev->ev_fd, ev->ev_res, ev->ev_arg);
     }
 }
 

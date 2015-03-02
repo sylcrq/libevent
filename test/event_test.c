@@ -13,7 +13,10 @@
 
 void fifo_read(int fd, int events, void* arg)
 {
+    struct event* ev = arg;
     char buf[255] = {0};
+
+    event_add(ev, NULL);
 
     printf("fifo_read called\n");
 

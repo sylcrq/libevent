@@ -34,9 +34,8 @@ struct event {
     struct timeval ev_timeout;
 
     int ev_flags;
-
+    int ev_res;
     int ev_pri;
-
     void* ev_arg;
 };
 
