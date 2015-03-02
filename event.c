@@ -120,7 +120,7 @@ void event_set(struct event* ev, int fd, int events, void (*callback)(int, int, 
 int event_add(struct event* ev, struct timeval* tv)
 {
     //if(!ev) return -1;
-    printf("event_add: ev=%p, tv=%s\n", ev, 
+    printf("event_add: ev=%p, tv=%s\n", ev,
            (tv==NULL) ? "NULL" : timeval_to_str(tv));
 
     struct event_base* base = ev->ev_base;
@@ -174,6 +174,9 @@ int event_dispatch(void)
         else
             timerclear(&tv);
 
+        if(base->event_count <= 0)
+            return 1;
+
         int ret = evsel->dispatch(base, evbase, &tv);
 
         if(ret < 0)
@@ -204,7 +207,7 @@ void event_queue_insert(struct event_base* base, struct event* ev, int queue)
         exit(1);
     }
 
-    printf("event_queue_insert: ev=%p, list=0x%.2x\n", ev, queue);
+    //printf("event_queue_insert: ev=%p, list=0x%.2x\n", ev, queue);
 
     base->event_count++;
 
@@ -230,8 +233,8 @@ void event_queue_insert(struct event_base* base, struct event* ev, int queue)
         exit(1);
     }
 
-    printf("event_queue_insert: event_count=%d, event_count_active=%d\n", 
-           base->event_count, base->event_count_active);
+    //printf("event_queue_insert: event_count=%d, event_count_active=%d\n",
+    //       base->event_count, base->event_count_active);
 }
 
 void event_queue_remove(struct event_base* base, struct event* ev, int queue)
@@ -242,7 +245,7 @@ void event_queue_remove(struct event_base* base, struct event* ev, int queue)
         exit(1);
     }
 
-    printf("event_queue_remove: ev=%p, list=0x%.2x\n", ev, queue);
+    //printf("event_queue_remove: ev=%p, list=0x%.2x\n", ev, queue);
 
     base->event_count--;
 
@@ -265,8 +268,8 @@ void event_queue_remove(struct event_base* base, struct event* ev, int queue)
         exit(1);
     }
 
-    printf("event_queue_remove: event_count=%d, event_count_active=%d\n", 
-           base->event_count, base->event_count_active);
+    //printf("event_queue_remove: event_count=%d, event_count_active=%d\n",
+    //       base->event_count, base->event_count_active);
 }
 
 int event_base_priority_init(struct event_base* base, int npriorities)

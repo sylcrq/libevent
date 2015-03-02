@@ -27,15 +27,15 @@ struct event {
     struct event_base* ev_base;
 
     int ev_fd;
-    int ev_events;
+    int ev_events;  // Event类型
 
     void (*ev_callback)(int, int, void* arg);
 
     struct timeval ev_timeout;
 
-    int ev_flags;
+    int ev_flags;  // Event当前状态
     int ev_res;
-    int ev_pri;
+    int ev_pri;  // 优先级
     void* ev_arg;
 };
 
