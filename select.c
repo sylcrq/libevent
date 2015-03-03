@@ -160,7 +160,7 @@ int select_dispatch(struct event_base* base, void* arg, struct timeval* tv)
             else if(ev->ev_fd > maxfd)
                 maxfd = ev->ev_fd;
 
-            event_active(ev);
+            event_active(ev, res);
         }
         else if(ev->ev_fd > maxfd)
         {

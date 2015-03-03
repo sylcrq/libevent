@@ -30,7 +30,7 @@ int main()
 
     event_init();
 
-    event_set(&timeout, -1, 0, timeout_cb);
+    event_set(&timeout, -1, 0, timeout_cb, &timeout);
 
     struct timeval tv = {2, 0};
     event_add(&timeout, &tv);

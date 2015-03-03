@@ -70,7 +70,7 @@ int main()
     }
 
     event_init();
-    event_set(&evfifo, socket, EVENT_READ, fifo_read);
+    event_set(&evfifo, socket, EVENT_READ, fifo_read, &evfifo);
 
     event_add(&evfifo, NULL);
 

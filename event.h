@@ -50,10 +50,10 @@ struct eventop {
 };
 
 void* event_init(void);
-void event_set(struct event*, int, int, void (*)(int, int, void*));
+void event_set(struct event*, int, int, void (*)(int, int, void*), void*);
 int event_add(struct event*, struct timeval*);
 int event_del(struct event*);
-void event_active(struct event*);
+void event_active(struct event*, int);
 int event_dispatch(void);
 
 int event_base_priority_init(struct event_base*, int);

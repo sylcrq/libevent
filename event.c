@@ -28,19 +28,21 @@ void event_process_active(struct event_base* base);
 int timeout_next(struct event_base* base, struct timeval* tv);
 void timeout_process(struct event_base* base);
 
+int event_haveevents(struct event_base* base);
+
 // 将struct timeval转换为字符串
-char g_timebuf[64] = {0};
-char* timeval_to_str(struct timeval* ptv)
-{
-    char tmp[64] = {0};
-    memset(g_timebuf, 0, sizeof(g_timebuf));
-
-    struct tm* nowtime = localtime(&(ptv->tv_sec));
-    strftime(tmp, sizeof(tmp), "%Y-%m-%d %H:%M:%S", nowtime);
-    snprintf(g_timebuf, sizeof(g_timebuf), "%s.%06d", tmp, ptv->tv_usec);
-
-    return g_timebuf;
-}
+//char g_timebuf[64] = {0};
+//char* timeval_to_str(struct timeval* ptv)
+//{
+//    char tmp[64] = {0};
+//    memset(g_timebuf, 0, sizeof(g_timebuf));
+//
+//    struct tm* nowtime = localtime(&(ptv->tv_sec));
+//    strftime(tmp, sizeof(tmp), "%Y-%m-%d %H:%M:%S", nowtime);
+//    snprintf(g_timebuf, sizeof(g_timebuf), "%s.%06d", tmp, ptv->tv_usec);
+//
+//    return g_timebuf;
+//}
 
 int compare(struct event* a, struct event* b)
 {
@@ -100,7 +102,7 @@ void* event_init(void)
     return g_current_base;
 }
 
-void event_set(struct event* ev, int fd, int events, void (*callback)(int, int, void*))
+void event_set(struct event* ev, int fd, int events, void (*callback)(int, int, void*), void* arg)
 {
     //if(!ev) return;
 
@@ -110,8 +112,8 @@ void event_set(struct event* ev, int fd, int events, void (*callback)(int, int, 
     ev->ev_events = events;
     ev->ev_callback = callback;
     ev->ev_flags = EVLIST_INIT;
+    ev->ev_arg = arg;
 
-    ev->ev_arg = ev;
     ev->ev_res = 0;
     // event默认优先级
     ev->ev_pri = g_current_base->nactivequeues/2;
@@ -120,8 +122,10 @@ void event_set(struct event* ev, int fd, int events, void (*callback)(int, int, 
 int event_add(struct event* ev, struct timeval* tv)
 {
     //if(!ev) return -1;
-    printf("event_add: ev=%p, tv=%s\n", ev,
-           (tv==NULL) ? "NULL" : timeval_to_str(tv));
+    printf("event_add: ev=%p, %s %s %s\n", ev,
+           (ev->ev_events & EVENT_READ) ? "READ" : "",
+           (ev->ev_events & EVENT_WRITE) ? "WRITE" : "",
+           tv ? "TIMEOUT" : "");
 
     struct event_base* base = ev->ev_base;
     const struct eventop* evsel = base->evsel;
@@ -163,23 +167,21 @@ int event_dispatch(void)
 
     struct timeval tv;
 
-    if(evsel->recalc(base, evbase, 0) < 0)
-        return -1;
-
     while(1)
     {
-        //gettimeofday(&tv, NULL);
-        if(base->event_count_active == 0)
+        if(evsel->recalc(base, evbase, 0) == -1)
+            return -1;
+
+        if(!base->event_count_active)
             timeout_next(base, &tv);
         else
             timerclear(&tv);
 
-        if(base->event_count <= 0)
+        if(!event_haveevents(base))
             return 1;
 
         int ret = evsel->dispatch(base, evbase, &tv);
-
-        if(ret < 0)
+        if(ret == -1)
             return -1;
 
         timeout_process(base);
@@ -188,9 +190,6 @@ int event_dispatch(void)
         {
             event_process_active(base);
         }
-
-        if(evsel->recalc(base, evbase, 0) < 0)
-            return -1;
     }
 
     return 0;
@@ -198,6 +197,7 @@ int event_dispatch(void)
 
 void event_queue_insert(struct event_base* base, struct event* ev, int queue)
 {
+    // 处理重复插入
     if(ev->ev_flags & queue)
     {
         if(queue & EVLIST_ACTIVE)
@@ -210,7 +210,6 @@ void event_queue_insert(struct event_base* base, struct event* ev, int queue)
     //printf("event_queue_insert: ev=%p, list=0x%.2x\n", ev, queue);
 
     base->event_count++;
-
     ev->ev_flags |= queue;
 
     switch(queue)
@@ -248,7 +247,6 @@ void event_queue_remove(struct event_base* base, struct event* ev, int queue)
     //printf("event_queue_remove: ev=%p, list=0x%.2x\n", ev, queue);
 
     base->event_count--;
-
     ev->ev_flags &= ~queue;
 
     switch(queue)
@@ -324,13 +322,17 @@ int event_del(struct event* ev)
     return 0;
 }
 
-void event_active(struct event* ev)
+void event_active(struct event* ev, int res)
 {
     printf("event_active: ev=%p\n", ev);
 
     if(ev->ev_flags & EVLIST_ACTIVE)
+    {
+        ev->ev_res |= res;
         return;
+    }
 
+    ev->ev_res = res;
     event_queue_insert(ev->ev_base, ev, EVLIST_ACTIVE);
 }
 
@@ -374,19 +376,26 @@ void timeout_process(struct event_base* base)
 
         next = RB_NEXT(event_tree, &(base->timetree), ev);
 
+        //event_queue_remove(base, ev, EVLIST_TIMEOUT);
+
         event_del(ev);
-        event_active(ev);
+        event_active(ev, EVENT_TIMEOUT);
     }
 }
 
+/* Active events are stored in priority queues.  Lower priorities are always
+ * process before higher priorities.  Low priority events can starve high
+ * priority ones.
+ */
 void event_process_active(struct event_base* base)
 {
     struct event* ev = NULL;
     struct event_list* activeq = NULL;
 
-    if(base->event_count_active == 0)
+    if(!base->event_count_active)
         return;
 
+    // struct event的ev_pri值越小, 优先级越高
     int i = 0;
     for(i=0; i<base->nactivequeues; i++)
     {
@@ -405,3 +414,7 @@ void event_process_active(struct event_base* base)
     }
 }
 
+int event_haveevents(struct event_base* base)
+{
+    return (base->event_count > 0);
+}
